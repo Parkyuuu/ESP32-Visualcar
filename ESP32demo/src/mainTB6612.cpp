@@ -1,0 +1,144 @@
+#include <Arduino.h>
+#include <cmath>
+#include <ESP32Servo.h>
+#include <XboxSeriesXControllerESP32_asukiaaa.hpp>
+
+#include "BluetoothSerial.h"
+
+#define PWMA 25
+
+#define AIN1 14
+#define AIN2 12
+#define SERVOIN 13
+
+Servo myservo; // 初始化舵机对象
+XboxSeriesXControllerESP32_asukiaaa::Core
+    xboxController("d9:d9:76:1b:1f:e0"); // 手柄的蓝牙mac地址
+
+
+String xbox_string()
+{
+  String str = String(xboxController.xboxNotif.btnY) + "," +
+               String(xboxController.xboxNotif.btnX) + "," +
+               String(xboxController.xboxNotif.btnB) + "," +
+               String(xboxController.xboxNotif.btnA) + "," +
+               String(xboxController.xboxNotif.btnLB) + "," +
+               String(xboxController.xboxNotif.btnRB) + "," +
+               String(xboxController.xboxNotif.btnSelect) + "," +
+               String(xboxController.xboxNotif.btnStart) + "," +
+               String(xboxController.xboxNotif.btnXbox) + "," +
+               String(xboxController.xboxNotif.btnShare) + "," +
+               String(xboxController.xboxNotif.btnLS) + "," +
+               String(xboxController.xboxNotif.btnRS) + "," +
+               String(xboxController.xboxNotif.btnDirUp) + "," +
+               String(xboxController.xboxNotif.btnDirRight) + "," + 
+               String(xboxController.xboxNotif.btnDirDown) + "," +
+               String(xboxController.xboxNotif.btnDirLeft) + "," +
+               String(xboxController.xboxNotif.joyLHori) + "," +
+               String(xboxController.xboxNotif.joyLVert) + "," +
+               String(xboxController.xboxNotif.joyRHori) + "," +
+               String(xboxController.xboxNotif.joyRVert) + "," +
+               String(xboxController.xboxNotif.trigLT) + "," +
+               String(xboxController.xboxNotif.trigRT) + "\n";
+  return str;
+};
+
+
+void Motor_Init() {
+    // 电机引脚初始化，设置为输出模式
+    pinMode(AIN1, OUTPUT);
+    pinMode(AIN2, OUTPUT);
+    // 初始化舵机 
+    myservo.attach(SERVOIN);
+    
+}
+
+void Motor_Toward(int direction) { // 控制电机的前行模式
+    switch (direction) {
+        case 0: // 停止
+            digitalWrite(AIN1, LOW);
+            digitalWrite(AIN2, LOW);
+            break;
+        case 1: // 正转
+            digitalWrite(AIN1, HIGH);
+            digitalWrite(AIN2, LOW);
+            break;
+        case 2: // 反转
+            digitalWrite(AIN1, LOW);
+            digitalWrite(AIN2, HIGH);
+            break;
+    }
+}
+
+void Motor_Speed(int speed) {
+    // 限制速度范围在0-255之间
+    speed = constrain(speed, 0, 255);
+    analogWrite(PWMA, speed); // 控制电机的速度
+}
+
+
+void setup() {
+  Serial.begin(115200);
+  xboxController.begin();
+  Motor_Init(); // 初始化引脚
+  myservo.write(90); // 舵机初始角度
+}
+
+void loop() {
+
+  xboxController.onLoop();
+  if (xboxController.isConnected())
+  {
+    if (xboxController.isWaitingForFirstNotification())
+    {
+      Serial.println("waiting for first notification");
+    }
+    else
+    {
+      int speed;
+      int stateTrigRT = xboxController.xboxNotif.trigRT;            // 右扳机的数值 放开0 按下为254
+      int joyLVert = - (xboxController.xboxNotif.joyLVert - 33730); // 原始数据 遥感到最上为 0 到最下 65535 中间值 33730
+      int joyLHori = xboxController.xboxNotif.joyLHori - 33310;     // 原始数据 遥感到最左为 0 到最右 65535 中间值 33310
+      // 死区防止漂移
+      if (abs(joyLHori) < 3000) joyLHori = 0;
+      if (abs(joyLVert) < 3000) joyLVert = 0;
+      double joyAngle = atan2(joyLVert, joyLHori) * (180.0 / M_PI); // 计算对应角度使用反三角函数
+      
+
+      // 扳机非线性控制电机速度通过PWM数值 
+      if (stateTrigRT != 0){
+        speed = stateTrigRT / 4;
+        speed = (int)speed;
+        
+        Motor_Toward(1);
+        if (speed >= 10 ){
+          Motor_Speed(speed);
+          delay(20); // 过快会导致电机工作不正常
+        }
+        else
+        {
+          Motor_Speed(0);
+        }
+      }
+      Serial.print("(" + String(joyLHori) + "," + String(joyLVert) + ") " + String(joyAngle) + " speed: " + String(speed) + "\n"); // 调试输出到串口
+      // 通过摇杆控制舵机转动的角度 joyAngle 以x非负半轴为起始 逆时针为正向
+      // PWM任选带D的引脚，但是Servo库建议（pins 2,4,12-19,21-23,25-27,32-33 ）
+      if (joyAngle != 0){
+        if (joyAngle < 0) joyAngle = 0; // 小于零不执行
+        myservo.write(joyAngle); // 写入角度参数
+        delay(20);
+      }
+
+
+    }
+  }
+  else
+  {
+    Serial.println("not connected");
+    if (xboxController.getCountFailedConnection() > 2)
+    {
+      ESP.restart();
+    }
+  }
+
+}
